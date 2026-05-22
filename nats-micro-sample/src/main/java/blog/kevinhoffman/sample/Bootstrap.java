@@ -30,6 +30,9 @@ public class Bootstrap implements ServiceSetup {
     // The Akka runtime injects ComponentClient into this @Setup class; it is passed on to a
     // NATS micro-service so its handlers can call other Akka components.
     this.natsRuntime.register(new CounterNatsService(componentClient));
+    // A Synadia agent registered with the same runtime — it shares the one NATS connection
+    // with the NATS micro-services above.
+    this.natsRuntime.register(new EchoSynadiaAgent());
   }
 
   @Override

@@ -85,6 +85,58 @@ public class Bootstrap implements ServiceSetup {
 }
 ```
 
+## Exposing a Synadia agent
+
+The same library also exposes an Akka service as a **Synadia agent** (Synadia Agent Protocol
+v0.3). Annotate a class with `@SynadiaAgent` (the agent identity, plus optional configuration)
+and mark exactly one method with `@PromptHandler`:
+
+```java
+import blog.kevinhoffman.akka.nats.synadia.*;
+
+@SynadiaAgent(agent = "echo", owner = "acme", name = "echo-1", version = "1.0.0")
+public class EchoSynadiaAgent {
+
+  // Single-shot form — return one response value.
+  @PromptHandler
+  public String handle(PromptRequest request) {
+    return "echo: " + request.prompt();
+  }
+}
+```
+
+A streaming, interactive handler takes an `AgentResponse` to emit content progressively and
+to ask the caller mid-stream questions:
+
+```java
+@PromptHandler
+public void handle(PromptRequest request, AgentResponse response) {
+  for (String word : request.prompt().split("\\s+")) {
+    response.emit(word);                                // an ordered `response` chunk each
+  }
+  QueryReply reply = response.query("Want a summary? (yes/no)");
+  if (!reply.timedOut() && reply.answer().equalsIgnoreCase("yes")) {
+    response.emit("\nSummary: " + request.prompt().length() + " chars.");
+  }
+}
+```
+
+Register the agent with the **same `NatsMicroRuntime`** — an agent and ordinary NATS
+micro-endpoints share one NATS connection:
+
+```java
+nats.register(new EchoSynadiaAgent());
+```
+
+The library handles the protocol mechanics: micro-service registration as `agents`, subject
+derivation, the shared `agents` queue group, the mandatory `ack` chunk, response stream
+framing and termination, periodic heartbeats, the `status` endpoint, discovery, and protocol
+error signaling. A handler rejects a request explicitly by throwing
+`SynadiaAgentException(code, message)`.
+
+Attachments are not supported in this release: the prompt endpoint advertises
+`attachments_ok=false` and rejects attachment-bearing requests with a `400`.
+
 ## Configuration
 
 The connection is read from the `nats { ... }` block of `application.conf`; every value
@@ -134,6 +186,21 @@ nats request echo.subject.orders.created  # -> echo.subject.orders.created
 
 > Endpoints are ordinary NATS subjects, so they are invoked with `nats request <subject>` —
 > there is no `nats micro request` subcommand.
+
+The sample also registers a Synadia agent — discoverable as the `agents` micro-service and
+prompted on its derived subject:
+
+```shell
+nats micro info agents                      # the agent's protocol metadata + endpoints
+
+# Prompt the agent. The reply is the protocol chunk stream:
+#   {"type":"status","data":"ack"} -> {"type":"response","data":"echo: hello"} -> <empty>
+nats request agents.prompt.echo.acme.echo-1 "hello"
+nats request agents.prompt.echo.acme.echo-1 '{"prompt":"hello"}'   # JSON envelope
+
+nats sub agents.hb.echo.acme.echo-1          # observe liveness heartbeats
+nats request agents.status.echo.acme.echo-1  # liveness on demand
+```
 
 ## Known limitation
 

@@ -5,22 +5,35 @@ import blog.kevinhoffman.akka.nats.internal.EndpointDescriptor;
 import blog.kevinhoffman.akka.nats.internal.HandlerDispatcher;
 import blog.kevinhoffman.akka.nats.internal.NatsConnectionFactory;
 import blog.kevinhoffman.akka.nats.internal.ServiceDescriptor;
+import blog.kevinhoffman.akka.nats.synadia.SynadiaAgent;
+import blog.kevinhoffman.akka.nats.synadia.internal.AgentDescriptor;
+import blog.kevinhoffman.akka.nats.synadia.internal.AgentReflector;
+import blog.kevinhoffman.akka.nats.synadia.internal.HeartbeatPublisher;
+import blog.kevinhoffman.akka.nats.synadia.internal.PromptMessageHandler;
+import blog.kevinhoffman.akka.nats.synadia.internal.StatusMessageHandler;
+import blog.kevinhoffman.akka.nats.synadia.internal.SynadiaSubjects;
 import io.nats.client.Connection;
 import io.nats.service.Service;
 import io.nats.service.ServiceBuilder;
 import io.nats.service.ServiceEndpoint;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
  * The entry point of the NATS micro-service endpoint library.
  *
  * <p>A developer creates a runtime from {@link NatsConnectionSettings}, registers one or more
- * {@code @NatsMicroService}-annotated instances, and drives its lifecycle from their own
+ * {@code @NatsMicroService}-annotated instances and/or
+ * {@code @SynadiaAgent}-annotated instances, and drives its lifecycle from their own
  * {@code @Setup ServiceSetup} class — {@link #start()} from {@code onStartup()} and
- * {@link #stop()} from {@code onShutdown()}.
+ * {@link #stop()} from {@code onShutdown()}. A Synadia agent and ordinary NATS micro-endpoints
+ * registered with one runtime share a single NATS connection.
  *
  * <p>The runtime is single-threaded with respect to its lifecycle: {@code register} is only
  * valid before {@code start}, and {@code start} may be called once.
@@ -36,8 +49,10 @@ public final class NatsMicroRuntime {
 
   private final NatsConnectionSettings settings;
   private final List<ServiceDescriptor> descriptors = new ArrayList<>();
+  private final List<AgentDescriptor> agentDescriptors = new ArrayList<>();
   private final List<Service> services = new ArrayList<>();
   private Connection connection;
+  private ScheduledExecutorService heartbeatScheduler;
   private State state = State.NEW;
 
   private NatsMicroRuntime(NatsConnectionSettings settings) {
@@ -53,16 +68,22 @@ public final class NatsMicroRuntime {
   }
 
   /**
-   * Registers a {@code @NatsMicroService}-annotated instance. Only valid before {@link #start()}.
+   * Registers a {@code @NatsMicroService}-annotated instance or a {@code @SynadiaAgent}-annotated
+   * instance. Only valid before {@link #start()}.
    *
    * @throws IllegalStateException    if the runtime has already been started
-   * @throws IllegalArgumentException if the instance is not a valid NATS micro-service
+   * @throws IllegalArgumentException if the instance is neither a valid NATS micro-service nor a
+   *     valid Synadia agent
    */
   public NatsMicroRuntime register(Object endpoint) {
     if (state != State.NEW) {
       throw new IllegalStateException("register() is only allowed before start()");
     }
-    descriptors.add(AnnotationReflector.reflect(endpoint));
+    if (endpoint != null && endpoint.getClass().isAnnotationPresent(SynadiaAgent.class)) {
+      agentDescriptors.add(AgentReflector.reflect(endpoint));
+    } else {
+      descriptors.add(AnnotationReflector.reflect(endpoint));
+    }
     return this;
   }
 
@@ -81,6 +102,24 @@ public final class NatsMicroRuntime {
         Service service = buildService(descriptor);
         service.startService();
         services.add(service);
+      }
+      if (!agentDescriptors.isEmpty()) {
+        heartbeatScheduler =
+            Executors.newScheduledThreadPool(
+                1,
+                runnable -> {
+                  Thread thread = new Thread(runnable, "synadia-agent-heartbeat");
+                  thread.setDaemon(true);
+                  return thread;
+                });
+        for (AgentDescriptor agent : agentDescriptors) {
+          HeartbeatPublisher heartbeat = new HeartbeatPublisher(connection, agent);
+          Service service = buildAgentService(agent, heartbeat);
+          service.startService();
+          services.add(service);
+          heartbeatScheduler.scheduleAtFixedRate(
+              heartbeat, 0, agent.heartbeatSeconds(), TimeUnit.SECONDS);
+        }
       }
       state = State.RUNNING;
     } catch (RuntimeException e) {
@@ -129,7 +168,53 @@ public final class NatsMicroRuntime {
     return serviceBuilder.build();
   }
 
+  /**
+   * Builds the NATS micro {@code Service} for one Synadia agent: a service named
+   * {@code agents} carrying the protocol metadata, with a {@code prompt} and a {@code status}
+   * endpoint both behind the shared {@code agents} queue group.
+   */
+  private Service buildAgentService(AgentDescriptor agent, HeartbeatPublisher heartbeat) {
+    Map<String, String> serviceMetadata = new LinkedHashMap<>();
+    serviceMetadata.put("agent", agent.agent());
+    serviceMetadata.put("owner", agent.owner());
+    serviceMetadata.put("protocol_version", SynadiaSubjects.PROTOCOL_VERSION);
+    if (!agent.session().isBlank()) {
+      serviceMetadata.put("session", agent.session());
+    }
+
+    ServiceEndpoint promptEndpoint =
+        ServiceEndpoint.builder()
+            .endpointName("prompt")
+            .endpointSubject(SynadiaSubjects.prompt(agent.agent(), agent.owner(), agent.name()))
+            .endpointQueueGroup(SynadiaSubjects.SERVICE_NAME)
+            .endpointMetadata(
+                Map.of("max_payload", agent.maxPayload(), "attachments_ok", "false"))
+            .handler(new PromptMessageHandler(connection, agent))
+            .build();
+
+    ServiceEndpoint statusEndpoint =
+        ServiceEndpoint.builder()
+            .endpointName("status")
+            .endpointSubject(SynadiaSubjects.status(agent.agent(), agent.owner(), agent.name()))
+            .endpointQueueGroup(SynadiaSubjects.SERVICE_NAME)
+            .handler(new StatusMessageHandler(connection, heartbeat))
+            .build();
+
+    return new ServiceBuilder()
+        .connection(connection)
+        .name(SynadiaSubjects.SERVICE_NAME)
+        .version(agent.version())
+        .metadata(serviceMetadata)
+        .addServiceEndpoint(promptEndpoint)
+        .addServiceEndpoint(statusEndpoint)
+        .build();
+  }
+
   private void cleanup() {
+    if (heartbeatScheduler != null) {
+      heartbeatScheduler.shutdownNow();
+      heartbeatScheduler = null;
+    }
     for (Service service : services) {
       try {
         service.stop();

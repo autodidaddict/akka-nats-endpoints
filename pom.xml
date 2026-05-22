@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>blog.kevinhoffman</groupId>
+    <artifactId>akka-nats-endpoints-parent</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>akka-nats-endpoints (parent)</name>
+    <description>
+        Aggregator build for the NATS micro-service endpoint library and its sample service.
+    </description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <jnats.version>2.21.1</jnats.version>
+        <jnats-server-runner.version>2.0.0</jnats-server-runner.version>
+        <typesafe-config.version>1.4.3</typesafe-config.version>
+        <junit.version>5.11.3</junit.version>
+        <assertj.version>3.26.3</assertj.version>
+        <maven-surefire.version>3.2.5</maven-surefire.version>
+    </properties>
+
+    <modules>
+        <!-- The published library. Build order: the sample depends on this module. -->
+        <module>nats-micro-endpoint</module>
+        <!-- A runnable Akka service that exercises the library; not published. -->
+        <module>nats-micro-sample</module>
+    </modules>
+</project>

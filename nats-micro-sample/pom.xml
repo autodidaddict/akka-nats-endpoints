@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      The sample is a real, runnable Akka service, so it extends akka-javasdk-parent rather
+      than the aggregator. It depends on the nats-micro-endpoint library module.
+    -->
+    <parent>
+        <groupId>io.akka</groupId>
+        <artifactId>akka-javasdk-parent</artifactId>
+        <version>3.5.19</version>
+    </parent>
+
+    <groupId>blog.kevinhoffman</groupId>
+    <artifactId>nats-micro-sample</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>nats-micro-sample</name>
+    <description>
+        Sample Akka service that exercises the nats-micro-endpoint library. Not published.
+    </description>
+
+    <dependencies>
+        <!-- The library under test. Brings in jnats transitively. -->
+        <dependency>
+            <groupId>blog.kevinhoffman</groupId>
+            <artifactId>nats-micro-endpoint</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+
+        <!-- Akka SDK TestKit for integration tests (version managed by the parent POM). -->
+        <dependency>
+            <groupId>io.akka</groupId>
+            <artifactId>akka-javasdk-testkit</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Embedded nats-server for integration tests. -->
+        <dependency>
+            <groupId>io.nats</groupId>
+            <artifactId>jnats-server-runner</artifactId>
+            <version>2.0.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

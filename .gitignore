@@ -22,3 +22,34 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# Maven build output
+target/
+effective-pom.xml
+
+# IDE - Eclipse
+.classpath
+.project
+.settings/
+
+# IDE - IntelliJ
+.idea/
+*.iml
+*.iws
+
+# IDE - VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Akka
+akka-context/
+.claude/settings.local.json
+
+# Local H2 database
+db.mv.db
+
+# Local backup directories
+.git-bak/
+.github-bak/

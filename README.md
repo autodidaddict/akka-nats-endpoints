@@ -164,12 +164,17 @@ Integration tests start an embedded `nats-server` (via `jnats-server-runner`), s
 
 ## Run the sample
 
-Start a NATS server, then run the sample service (the `-am` flag also builds the library):
+Start a NATS server, then build and run the sample service. Run the build and the
+`exec:java` step separately: `exec:java` executes against every project in the reactor, and
+the aggregator root pom has no main class — so build first, then run only the sample module.
 
 ```shell
 nats-server &
-mvn -pl nats-micro-sample -am compile exec:java
+mvn install -DskipTests          # builds both modules; installs the library to ~/.m2
+mvn -pl nats-micro-sample exec:java
 ```
+
+After the install, `cd nats-micro-sample && mvn exec:java` also works directly.
 
 Then interact with it using the `nats` CLI:
 
